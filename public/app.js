@@ -47,9 +47,9 @@ learnjs.problemView = function (data) {
             buttonItem.remove();
         });
     }
-    
-    learnjs.fetchAnswer(problemNumber).then(function(data) {
-        if(data.Item){
+
+    learnjs.fetchAnswer(problemNumber).then(function (data) {
+        if (data.Item) {
             answer.val(data.Item.answer);
         }
     });
@@ -65,6 +65,7 @@ learnjs.showView = function (hash) {
     var routes = {
         '#problem': learnjs.problemView,
         '#profile': learnjs.profileView,
+        '#popular': learnjs.popularView,
         '#': learnjs.landingView,
         '': learnjs.landingView,
     };
@@ -112,6 +113,10 @@ learnjs.buildCorrectFlash = function (problemNum) {
         link.attr('href', '');
         link.text("You're Finished!");
     }
+
+    learnjs.identity.done(function () {
+        learnjs.addPopularLink(correctFlash, problemNum);
+    });
     return correctFlash;
 }
 
@@ -136,28 +141,28 @@ learnjs.awsRefresh = function () {
     return deferred.promise();
 }
 
-learnjs.profileView = function(){
+learnjs.profileView = function () {
     var view = learnjs.template('profile-view');
-    learnjs.identity.done(function(identity){
+    learnjs.identity.done(function (identity) {
         view.find('.email').text(identity.email);
     });
     return view;
 }
 
-learnjs.addProfileLink = function(profile) {
+learnjs.addProfileLink = function (profile) {
     var link = learnjs.template('profile-link');
     link.find('a').text(profile.email);
     $('.signin-bar').prepend(link);
 }
 
-learnjs.sendDbRequest = function(req, retry) {
+learnjs.sendDbRequest = function (req, retry) {
     var promise = new $.Deferred();
-    req.on('error', function(error){
-        if(error.code === "CredentialsError") {
-            learnjs.identity.then(function(identity) {
-                return identity.refresh().then(function() {
+    req.on('error', function (error) {
+        if (error.code === "CredentialsError") {
+            learnjs.identity.then(function (identity) {
+                return identity.refresh().then(function () {
                     return retry();
-                }, function() {
+                }, function () {
                     promise.reject(resp);
                 });
             });
@@ -165,45 +170,116 @@ learnjs.sendDbRequest = function(req, retry) {
             promise.reject(error);
         }
     });
-    req.on('success', function(resp) {
+    req.on('success', function (resp) {
         promise.resolve(resp.data);
     });
     req.send();
     return promise;
 }
 
-learnjs.saveAnswer = function(problemId, answer) {
-    return learnjs.identity.then(function(identity) {
+learnjs.sendAwsRequest = function (req, retry) {
+    var promise = new $.Deferred();
+    req.on('error', function (error) {
+        if (error.code === "CredentialsError") {
+            learnjs.identity.then(function (identity) {
+                return identity.refresh().then(function () {
+                    return retry();
+                }, function () {
+                    promise.reject(resp);
+                });
+            });
+        } else {
+            promise.reject(error);
+        }
+    });
+    req.on('success', function (resp) {
+        promise.resolve(resp.data);
+    });
+    req.send();
+    return promise;
+}
+
+learnjs.saveAnswer = function (problemId, answer) {
+    return learnjs.identity.then(function (identity) {
         var db = new AWS.DynamoDB.DocumentClient();
         var item = {
             TableName: 'learnjs',
-            Item : {
+            Item: {
                 userId: identity.id,
                 problemId: problemId,
                 answer: answer
             }
         };
-        return learnjs.sendDbRequest(db.put(item), function() {
+        return learnjs.sendDbRequest(db.put(item), function () {
             return learnjs.saveAnswer(problemId, answer);
         })
     });
 };
 
-learnjs.fetchAnswer = function(problemId) {
-    return learnjs.identity.then(function(identity) {
+learnjs.fetchAnswer = function (problemId) {
+    return learnjs.identity.then(function (identity) {
         var db = new AWS.DynamoDB.DocumentClient();
         var item = {
             TableName: 'learnjs',
-            Key : {
+            Key: {
                 userId: identity.id,
                 problemId: problemId,
             }
         };
-        return learnjs.sendDbRequest(db.get(item), function() {
+        return learnjs.sendDbRequest(db.get(item), function () {
             return learnjs.fetchAnswer(problemId);
         })
     });
 };
+
+learnjs.countAnswers = function (problemId) {
+    return learnjs.identity.then(function (identity) {
+        var db = new AWS.DynamoDB.DocumentClient();
+        var params = {
+            TableName: 'learnjs',
+            Select: 'COUNT',
+            FilterExpression: 'problemId = :problemId',
+            ExpressionAttributeValues: { ':problemId': problemId }
+        };
+        return learnjs.sendDbRequest(db.scan(params), function () {
+            return learnjs.countAnswers(problemId);
+        })
+    });
+}
+
+learnjs.popularAnswers = function (problemId) {
+    return learnjs.identity.then(function () {
+        var lambda = new AWS.Lambda();
+        var params = {
+//            FunctionName: 'learnjs_popularAnswers',
+            FunctionName: 'popularAnswers',
+            Payload: JSON.stringify({ problemNumber: problemId })
+        };
+        return learnjs.sendAwsRequest(lambda.invoke(params), function () {
+            return learnjs.popularAnswers(problemId);
+        });
+    });
+}
+
+learnjs.addPopularLink = function (parentElem, problemNumber) {
+    var link = learnjs.template('popular-link');
+    link.find('a').attr('href', '#popular-' + problemNumber);
+    parentElem.append(link);
+}
+
+learnjs.popularView = function (data) {
+    var problemNumber = parseInt(data, 10);
+    var view = learnjs.template('popular-view');
+    var popular = view.find('.popular-list');
+    learnjs.popularAnswers(problemNumber).then(function (items) {
+        var objs = JSON.parse(items.Payload);
+        for (var key in objs) {
+            popular.append($('<p>').text('answer: ' + key + ', count: ' + objs[key]));
+        }
+    });
+    view.find('.title').text('Popular Answer for Problem #' + problemNumber);
+    return view;
+}
 
 function googleSignIn(googleUser) {
     var id_token = googleUser.getAuthResponse().id_token;

@@ -210,7 +210,8 @@ function build_bundle() {
   cp -r lib/* dist/
   cd dist
   chmod -R a+r *
-  zip -r archive.zip *
+#  zip -r archive.zip *
+  "C:\Program Files\7-Zip\7za.exe" a -tzip archive.zip *
   mv archive.zip ..
   cd ..
   rm -rf dist
